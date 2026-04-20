@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>图片像素颜色可视化 — K-means 聚类</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f5f3;
+    --surface: #ffffff;
+    --surface2: #f0efeb;
+    --border: rgba(0,0,0,0.12);
+    --border2: rgba(0,0,0,0.22);
+    --text: #1a1a1a;
+    --text2: #6b6b6b;
+    --radius: 10px;
+    --radius-lg: 14px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a1a;
+      --surface: #242424;
+      --surface2: #2e2e2e;
+      --border: rgba(255,255,255,0.1);
+      --border2: rgba(255,255,255,0.2);
+      --text: #f0f0f0;
+      --text2: #999;
+    }
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  .header {
+    background: var(--surface);
+    border-bottom: 0.5px solid var(--border);
+    padding: 1rem 2rem;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .header-icon {
+    width: 36px; height: 36px;
+    background: #1a1a1a;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .header h1 { font-size: 16px; font-weight: 600; }
+  .header p { font-size: 12px; color: var(--text2); margin-top: 1px; }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1.5rem; }
+
+  /* Upload */
+  .upload-area {
+    border: 2px dashed var(--border2);
+    border-radius: var(--radius-lg);
+    padding: 2.5rem;
+    text-align: center;
+    cursor: pointer;
+    background: var(--surface);
+    transition: background 0.2s, border-color 0.2s;
+    margin-bottom: 1.25rem;
+  }
+  .upload-area:hover, .upload-area.drag-over {
+    border-color: #1a1a1a;
+    background: var(--surface2);
+  }
+  .upload-icon { margin: 0 auto 10px; display: block; opacity: 0.4; }
+  .upload-area h2 { font-size: 15px; font-weight: 500; margin-bottom: 4px; }
+  .upload-area p { font-size: 13px; color: var(--text2); }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    align-items: center; margin-bottom: 1.25rem;
+  }
+  .ctrl {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 7px 12px;
+  }
+  .ctrl label { font-size: 13px; color: var(--text2); white-space: nowrap; }
+  .ctrl strong { color: var(--text); font-weight: 600; }
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 100px; height: 4px;
+    background: var(--border2); border-radius: 2px; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #1a1a1a; cursor: pointer;
+  }
+  select {
+    background: transparent; border: none; outline: none;
+    color: var(--text); font-size: 13px; cursor: pointer;
+  }
+  .btn {
+    padding: 8px 16px; border-radius: var(--radius); font-size: 13px;
+    cursor: pointer; border: 0.5px solid var(--border2);
+    background: transparent; color: var(--text);
+    transition: background 0.15s;
+  }
+  .btn:hover { background: var(--surface2); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.primary {
+    background: #1a1a1a; color: #fff; border-color: #1a1a1a;
+  }
+  .btn.primary:hover { background: #333; }
+  .btn.primary:disabled { background: #999; border-color: #999; }
+
+  /* Progress */
+  .progress-bar {
+    height: 3px; background: var(--border);
+    border-radius: 2px; margin-bottom: 10px; overflow: hidden;
+  }
+  .progress-fill { height: 100%; background: #1a1a1a; width: 0%; transition: width 0.3s; border-radius: 2px; }
+
+  /* Status */
+  .status {
+    font-size: 13px; color: var(--text2);
+    text-align: center; padding: 8px 0 14px;
+  }
+
+  /* Panels */
+  .panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  @media (max-width: 680px) { .panels { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.1rem;
+  }
+  .panel-title {
+    font-size: 12px; color: var(--text2);
+    font-weight: 500; text-transform: uppercase;
+    letter-spacing: 0.05em; margin-bottom: 10px;
+  }
+
+  #preview-canvas { width: 100%; border-radius: 8px; display: block; }
+
+  /* Swatches */
+  .swatches { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .swatch {
+    border-radius: 6px; padding: 5px 9px;
+    font-size: 11px; font-weight: 500;
+    font-family: 'Courier New', monospace;
+    cursor: default;
+  }
+
+  /* Chart */
+  #chart-wrap { width: 100%; height: 300px; }
+
+  /* Stats row */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 1rem;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+  }
+  .stat-label { font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+  .stat-value { font-size: 22px; font-weight: 600; color: var(--text); }
+
+  /* AI Box */
+  .ai-box {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.25rem;
+    margin-top: 1rem;
+  }
+  .ai-header {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  }
+  .ai-badge {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+    background: #1a1a1a; color: #fff;
+    padding: 2px 7px; border-radius: 4px;
+  }
+  .ai-header h3 { font-size: 14px; font-weight: 500; }
+  .ai-result {
+    font-size: 14px; color: var(--text); line-height: 1.75;
+    white-space: pre-wrap;
+  }
+  .ai-loading {
+    font-size: 13px; color: var(--text2);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .spinner {
+    width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid var(--border);
+    border-top-color: var(--text);
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Color palette strip */
+  .palette-strip {
+    display: flex; height: 24px; border-radius: 6px;
+    overflow: hidden; margin-top: 8px;
+  }
+  .palette-seg { flex: 1; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-icon">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
+      <circle cx="12" cy="12" r="10"/><circle cx="8" cy="10" r="1.5" fill="#fff"/>
+      <circle cx="16" cy="10" r="1.5" fill="#fff"/><circle cx="12" cy="15" r="1.5" fill="#fff"/>
+    </svg>
+  </div>
+  <div>
+    <h1>图片像素颜色可视化</h1>
+    <p>K-means 聚类 · ECharts 可视化 · AI 色彩分析</p>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Upload -->
+  <div class="upload-area" id="upload-area">
+    <input type="file" id="file-input" accept="image/*" style="display:none">
+    <svg class="upload-icon" width="40" height="40" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="1.5">
+      <rect x="3" y="3" width="18" height="18" rx="2"/>
+      <circle cx="8.5" cy="8.5" r="1.5"/>
+      <polyline points="21 15 16 10 5 21"/>
+    </svg>
+    <h2>点击上传图片，或将图片拖拽到此处</h2>
+    <p>支持 JPG、PNG、WebP、GIF 等常见格式</p>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="ctrl">
+      <label>K 值：<strong id="k-label">6</strong></label>
+      <input type="range" id="k-slider" min="3" max="12" value="6" step="1">
+    </div>
+    <div class="ctrl">
+      <label>颜色空间：</label>
+      <select id="color-space">
+        <option value="rgb">RGB</option>
+        <option value="lab">LAB（感知均匀）</option>
+      </select>
+    </div>
+    <div class="ctrl">
+      <label>图表样式：</label>
+      <select id="chart-type">
+        <option value="pie">饼图</option>
+        <option value="bar">柱状图</option>
+        <option value="treemap">矩形树图</option>
+      </select>
+    </div>
+    <button class="btn primary" id="run-btn" disabled>运行聚类</button>
+    <button class="btn" id="ai-btn" disabled>AI 色彩分析</button>
+  </div>
+
+  <!-- Progress + Status -->
+  <div class="progress-bar" id="prog-bar" style="display:none">
+    <div class="progress-fill" id="prog-fill"></div>
+  </div>
+  <div class="status" id="status">请上传一张图片开始分析</div>
+
+  <!-- Stats -->
+  <div class="stats-row" id="stats-row" style="display:none">
+    <div class="stat-card">
+      <div class="stat-label">聚类数量 K</div>
+      <div class="stat-value" id="stat-k">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">采样像素数</div>
+      <div class="stat-value" id="stat-pixels">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">颜色空间</div>
+      <div class="stat-value" id="stat-space">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">主色调</div>
+      <div class="palette-strip" id="stat-palette"></div>
+    </div>
+  </div>
+
+  <!-- Panels -->
+  <div class="panels" id="panels" style="display:none">
+    <div class="panel">
+      <div class="panel-title">原始图片</div>
+      <canvas id="preview-canvas"></canvas>
+      <div class="swatches" id="swatches"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title" id="chart-title">聚类结果</div>
+      <div id="chart-wrap"></div>
+    </div>
+  </div>
+
+  <!-- AI Analysis -->
+  <div class="ai-box" id="ai-box" style="display:none">
+    <div class="ai-header">
+      <span class="ai-badge">AI</span>
+      <h3>色彩和谐性分析</h3>
+    </div>
+    <div id="ai-result" class="ai-result"></div>
+  </div>
+
+</div>
+
+<script>
+// ─── State ───────────────────────────────────────────
+let imgData = null, clusters = [], myChart = null;
+
+// ─── Elements ────────────────────────────────────────
+const kSlider   = document.getElementById('k-slider');
+const kLabel    = document.getElementById('k-label');
+const runBtn    = document.getElementById('run-btn');
+const aiBtn     = document.getElementById('ai-btn');
+const statusEl  = document.getElementById('status');
+const progBar   = document.getElementById('prog-bar');
+const progFill  = document.getElementById('prog-fill');
+const panels    = document.getElementById('panels');
+const swatchesEl= document.getElementById('swatches');
+const aiBox     = document.getElementById('ai-box');
+const aiResult  = document.getElementById('ai-result');
+const statsRow  = document.getElementById('stats-row');
+const chartWrap = document.getElementById('chart-wrap');
+
+// ─── Upload / Drag ────────────────────────────────────
+const uploadArea = document.getElementById('upload-area');
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('drag-over'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag-over'));
+uploadArea.addEventListener('drop', e => {
+  e.preventDefault(); uploadArea.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) loadImage(e.dataTransfer.files[0]);
+});
+uploadArea.addEventListener('click', () => document.getElementById('file-input').click());
+document.getElementById('file-input').addEventListener('change', e => {
+  if (e.target.files[0]) loadImage(e.target.files[0]);
+});
+
+function loadImage(file) {
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.getElementById('preview-canvas');
+      const maxW = 500, maxH = 400;
+      let w = img.width, h = img.height;
+      if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+      if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const raw = canvas.getContext('2d').getImageData(0, 0, w, h);
+      imgData = { raw, w, h };
+      runBtn.disabled = false;
+      statusEl.textContent = `图片已加载：${img.width} × ${img.height} 像素 — 点击「运行聚类」开始分析`;
+      clusters = []; aiBox.style.display = 'none'; aiBtn.disabled = true;
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// ─── Controls ────────────────────────────────────────
+kSlider.addEventListener('input', () => { kLabel.textContent = kSlider.value; });
+document.getElementById('chart-type').addEventListener('change', () => { if (clusters.length) renderChart(); });
+
+// ─── Run clustering ───────────────────────────────────
+runBtn.addEventListener('click', async () => {
+  if (!imgData) return;
+  runBtn.disabled = true; aiBtn.disabled = true;
+  panels.style.display = 'grid'; statsRow.style.display = 'grid';
+  progBar.style.display = 'block'; setProgress(0);
+
+  const k = parseInt(kSlider.value);
+  const colorSpace = document.getElementById('color-space').value;
+
+  statusEl.textContent = '正在采样像素...';
+  await sleep(10);
+
+  const pixels = samplePixels(imgData.raw, 4000);
+  document.getElementById('stat-pixels').textContent = pixels.length.toLocaleString();
+  document.getElementById('stat-k').textContent = k;
+  document.getElementById('stat-space').textContent = colorSpace.toUpperCase();
+
+  statusEl.textContent = `K-means 聚类中（K=${k}，${colorSpace.toUpperCase()} 空间）...`;
+  setProgress(15);
+  await sleep(20);
+
+  const converted = colorSpace === 'lab' ? pixels.map(rgbToLab) : pixels;
+  clusters = await kmeansAsync(converted, k, colorSpace);
+  setProgress(95);
+  await sleep(10);
+
+  renderSwatches();
+  renderPaletteStrip();
+  renderChart();
+  setProgress(100);
+  await sleep(300);
+  progBar.style.display = 'none';
+  statusEl.textContent = `聚类完成！K=${k} 个主色调已提取。`;
+  runBtn.disabled = false; aiBtn.disabled = false;
+});
+
+// ─── AI Analysis ──────────────────────────────────────
+aiBtn.addEventListener('click', async () => {
+  if (!clusters.length) return;
+  aiBox.style.display = 'block';
+  aiResult.innerHTML = '<div class="ai-loading"><div class="spinner"></div>正在调用 AI 分析色彩和谐性...</div>';
+
+  const total = clusters.reduce((a, b) => a + b.count, 0);
+  const k = clusters.length;
+  const colorDescriptions = clusters.map((c, i) => {
+    const hex = rgbToHex(c.center);
+    const pct = ((c.count / total) * 100).toFixed(1);
+    return `颜色C${i+1}: ${hex}（RGB: ${c.center.map(Math.round).join(', ')}），占比 ${pct}%`;
+  }).join('\n');
+
+  const prompt = `你是一位专业色彩设计师。以下是从一张图片中通过K-means聚类（K=${k}）提取的${k}种主色调：
+
+${colorDescriptions}
+
+请分析：
+1. 这${k}种颜色之间的搭配是否和谐？请给出整体评价。
+2. 它们属于哪种色彩关系（如互补色、类似色、三角色、分裂互补色等）？
+3. 整体色调倾向是什么（暖调/冷调/中性）？情感表达如何？
+4. 给出1-2条具体的设计运用建议。
+
+请用中文回答，语言专业且简洁（不超过250字）。`;
+
+  try {
+    const resp = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer sk-c9bbd1163c654c0b9568bfb0f6f023fc'
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error.message);
+    const text = data.choices?.[0]?.message?.content || '分析失败，请重试。';
+    aiResult.textContent = text;
+  } catch (e) {
+    aiResult.textContent = '⚠ 请求失败：' + e.message + '\n\n请确认网络连接正常，或稍后重试。';
+  }
+});
+
+// ─── K-means ──────────────────────────────────────────
+function samplePixels(raw, maxN) {
+  const total = raw.data.length / 4;
+  const step = Math.max(1, Math.floor(total / maxN));
+  const pixels = [];
+  for (let i = 0; i < total; i += step) {
+    const idx = i * 4;
+    if (raw.data[idx + 3] < 128) continue;
+    pixels.push([raw.data[idx], raw.data[idx+1], raw.data[idx+2]]);
+  }
+  return pixels;
+}
+
+async function kmeansAsync(points, k, colorSpace) {
+  const n = points.length;
+  // K-means++ initialization
+  let centers = [points[Math.floor(Math.random() * n)]];
+  while (centers.length < k) {
+    const dists = points.map(p => Math.min(...centers.map(c => dist2(p, c))));
+    const total = dists.reduce((a, b) => a + b, 0);
+    let r = Math.random() * total;
+    for (let i = 0; i < n; i++) {
+      r -= dists[i];
+      if (r <= 0) { centers.push(points[i]); break; }
+    }
+    if (centers.length < k) centers.push(points[Math.floor(Math.random() * n)]);
+  }
+
+  let assignments = new Int32Array(n);
+  let changed = true; let iter = 0;
+
+  while (changed && iter < 50) {
+    changed = false;
+    for (let i = 0; i < n; i++) {
+      let best = 0, bestD = Infinity;
+      for (let c = 0; c < k; c++) {
+        const d = dist2(points[i], centers[c]);
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      if (assignments[i] !== best) { assignments[i] = best; changed = true; }
+    }
+    const sums = Array.from({length: k}, () => [0, 0, 0]);
+    const counts = new Int32Array(k);
+    for (let i = 0; i < n; i++) {
+      const c = assignments[i];
+      sums[c][0] += points[i][0]; sums[c][1] += points[i][1]; sums[c][2] += points[i][2];
+      counts[c]++;
+    }
+    for (let c = 0; c < k; c++) {
+      if (counts[c] > 0) {
+        centers[c] = [sums[c][0]/counts[c], sums[c][1]/counts[c], sums[c][2]/counts[c]];
+      }
+    }
+    iter++;
+    setProgress(15 + Math.min(iter * 1.5, 75));
+    if (iter % 5 === 0) await sleep(0);
+  }
+
+  const rgbCenters = colorSpace === 'lab' ? centers.map(labToRgb) : centers;
+  const counts = new Int32Array(k);
+  for (let i = 0; i < n; i++) counts[assignments[i]]++;
+  return rgbCenters.map((c, i) => ({ center: c, count: counts[i] }))
+                   .sort((a, b) => b.count - a.count);
+}
+
+function dist2(a, b) {
+  return (a[0]-b[0])**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2;
+}
+
+// ─── Color conversion ─────────────────────────────────
+function rgbToLab([r, g, b]) {
+  let rr = r/255, gg = g/255, bb = b/255;
+  rr = rr > 0.04045 ? ((rr+0.055)/1.055)**2.4 : rr/12.92;
+  gg = gg > 0.04045 ? ((gg+0.055)/1.055)**2.4 : gg/12.92;
+  bb = bb > 0.04045 ? ((bb+0.055)/1.055)**2.4 : bb/12.92;
+  let x = (rr*0.4124+gg*0.3576+bb*0.1805)/0.95047;
+  let y = (rr*0.2126+gg*0.7152+bb*0.0722)/1.00000;
+  let z = (rr*0.0193+gg*0.1192+bb*0.9505)/1.08883;
+  const f = t => t > 0.008856 ? t**(1/3) : 7.787*t + 16/116;
+  x = f(x); y = f(y); z = f(z);
+  return [116*y - 16, 500*(x - y), 200*(y - z)];
+}
+
+function labToRgb([L, a, b]) {
+  let y = (L + 16) / 116, x = a/500 + y, z = y - b/200;
+  const fi = t => t**3 > 0.008856 ? t**3 : (t - 16/116)/7.787;
+  x = fi(x)*0.95047; y = fi(y)*1.00000; z = fi(z)*1.08883;
+  let r = x*3.2406 + y*(-1.5372) + z*(-0.4986);
+  let g = x*(-0.9689) + y*1.8758 + z*0.0415;
+  let bv= x*0.0557 + y*(-0.2040) + z*1.0570;
+  const lin = v => v > 0.0031308 ? 1.055*v**(1/2.4)-0.055 : 12.92*v;
+  return [
+    Math.min(255, Math.max(0, Math.round(lin(r)*255))),
+    Math.min(255, Math.max(0, Math.round(lin(g)*255))),
+    Math.min(255, Math.max(0, Math.round(lin(bv)*255)))
+  ];
+}
+
+function rgbToHex([r, g, b]) {
+  return '#' + [r,g,b].map(v => Math.round(v).toString(16).padStart(2,'0')).join('');
+}
+
+function getLuminance([r, g, b]) { return 0.299*r + 0.587*g + 0.114*b; }
+
+// ─── Render ───────────────────────────────────────────
+function renderSwatches() {
+  swatchesEl.innerHTML = '';
+  const total = clusters.reduce((a,b) => a+b.count, 0);
+  clusters.forEach(c => {
+    const hex = rgbToHex(c.center);
+    const lum = getLuminance(c.center);
+    const textColor = lum > 140 ? '#1a1a1a' : '#ffffff';
+    const pct = ((c.count/total)*100).toFixed(1);
+    const el = document.createElement('div');
+    el.className = 'swatch';
+    el.style.cssText = `background:${hex}; color:${textColor};`;
+    el.textContent = `${hex}  ${pct}%`;
+    swatchesEl.appendChild(el);
+  });
+}
+
+function renderPaletteStrip() {
+  const strip = document.getElementById('stat-palette');
+  strip.innerHTML = '';
+  const total = clusters.reduce((a,b) => a+b.count, 0);
+  clusters.forEach(c => {
+    const seg = document.createElement('div');
+    seg.className = 'palette-seg';
+    seg.style.cssText = `background:${rgbToHex(c.center)}; flex: ${(c.count/total*100).toFixed(1)};`;
+    strip.appendChild(seg);
+  });
+}
+
+function renderChart() {
+  const type = document.getElementById('chart-type').value;
+  const titleMap = { pie: '颜色占比（饼图）', bar: '像素数量（柱状图）', treemap: '颜色占比（矩形树图）' };
+  document.getElementById('chart-title').textContent = titleMap[type];
+  const total = clusters.reduce((a,b) => a+b.count, 0);
+
+  if (!myChart) {
+    myChart = echarts.init(chartWrap);
+    window.addEventListener('resize', () => myChart.resize());
+  }
+
+  const data = clusters.map(c => ({
+    name: rgbToHex(c.center),
+    value: c.count,
+    pct: ((c.count/total)*100).toFixed(1),
+    itemStyle: { color: rgbToHex(c.center) }
+  }));
+
+  let option;
+
+  if (type === 'pie') {
+    option = {
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'item',
+        formatter: p => `<b style="color:${p.name}">${p.name}</b><br>像素数：${p.value.toLocaleString()}<br>占比：${p.data.pct}%`
+      },
+      legend: { show: false },
+      series: [{
+        type: 'pie', radius: ['38%', '72%'],
+        center: ['50%', '52%'],
+        data,
+        label: {
+          formatter: p => `${p.data.pct}%`,
+          fontSize: 12, fontWeight: 'bold'
+        },
+        labelLine: { length: 10, length2: 12 },
+        emphasis: { itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.2)' } }
+      }]
+    };
+  } else if (type === 'bar') {
+    option = {
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        formatter: p => {
+          const d = data[p[0].dataIndex];
+          return `<b style="color:${d.name}">${d.name}</b><br>像素数：${d.value.toLocaleString()}<br>占比：${d.pct}%`;
+        }
+      },
+      grid: { left: 50, right: 20, top: 20, bottom: 60 },
+      xAxis: {
+        type: 'category',
+        data: clusters.map(c => rgbToHex(c.center)),
+        axisLabel: { rotate: 35, fontSize: 11, color: '#888', fontFamily: 'monospace' }
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { formatter: v => v >= 1000 ? (v/1000).toFixed(1)+'k' : v, fontSize: 11, color: '#888' }
+      },
+      series: [{
+        type: 'bar', data, barMaxWidth: 44,
+        label: {
+          show: true, position: 'top',
+          formatter: p => data[p.dataIndex].pct + '%',
+          fontSize: 11, fontWeight: 'bold'
+        }
+      }]
+    };
+  } else {
+    option = {
+      backgroundColor: 'transparent',
+      tooltip: {
+        formatter: p => `<b style="color:${p.name}">${p.name}</b><br>像素数：${p.value.toLocaleString()}<br>占比：${p.data.pct}%`
+      },
+      series: [{
+        type: 'treemap', roam: false, nodeClick: false,
+        width: '100%', height: '92%',
+        data: data.map((d, i) => ({
+          ...d,
+          label: {
+            show: true, fontSize: 12, fontWeight: 'bold',
+            formatter: p => `${p.name}\n${p.data.pct}%`,
+            color: getLuminance(clusters[i].center) > 140 ? '#1a1a1a' : '#ffffff'
+          }
+        })),
+        breadcrumb: { show: false },
+        itemStyle: { borderWidth: 2, borderColor: 'transparent', gapWidth: 2 }
+      }]
+    };
+  }
+
+  myChart.setOption(option, true);
+}
+
+// ─── Utils ────────────────────────────────────────────
+function setProgress(pct) { progFill.style.width = Math.min(100, pct) + '%'; }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>
